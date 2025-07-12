@@ -24,7 +24,34 @@ from sklearn.cluster import DBSCAN
 from tqdm import tqdm
 from tld import get_fld, get_tld
 
+try:
+    from dnstwist import DomainFuzz
+except ImportError:  # pragma: no cover - optional dependency
+    DomainFuzz = None
+
 import config
+
+
+def generate_dnstwist_domains(base_domain):
+    """Generate domain permutations using dnstwist.
+
+    Parameters
+    ----------
+    base_domain : str
+        Base domain name to fuzz.
+
+    Returns
+    -------
+    list
+        List of generated domain names.
+    """
+
+    if DomainFuzz is None:
+        raise ImportError("dnstwist is required for this feature")
+
+    fuzzer = DomainFuzz(base_domain)
+    fuzzer.generate()
+    return [d["domain"] for d in getattr(fuzzer, "domains", [])]
 
 class Converter:
     """
@@ -288,6 +315,24 @@ class PRDetector:
                 with open(filepath) as f:
                     domains = [line.strip() for line in f]
                 self.input_domains_list += PRCluster.exclude_domains(domains)
+
+        if len(self.input_domains_list) == 0:
+            self.logger.error("No domains in input_domains")
+            sys.exit(1)
+        self.logger.info("Start converting domain names to vectors")
+        converter = Converter()
+        vecs = converter.encode(self.input_domains_list)
+        self.logger.info("Finish converting domain names to vectors")
+        self.domain_vec_dic = {domain: vec for domain,
+                               vec in zip(self.input_domains_list, vecs)}
+        self.logger.info("Number of input_domains: {}".format(
+            len(self.input_domains_list)))
+
+    def load_domain_list_and_calculate_vec(self, domains):
+        """Load domains from a list and calculate vectors."""
+
+        self.domain_vec_dic = {}
+        self.input_domains_list = PRCluster.exclude_domains(domains)
 
         if len(self.input_domains_list) == 0:
             self.logger.error("No domains in input_domains")
@@ -700,10 +745,24 @@ def main(args):
     # clustering phishing TI
     prcluster_result = prcluster.run()
 
-    prdetector = PRDetector(label_domain_dic=prcluster_result.label_domain_dic, domain_label_dic=prcluster_result.domain_label_dic,
-                            label_filter_dic=prcluster_result.label_filter_dic, cluster_vec_dic=prcluster.phishingti_vec_dic, args=args)
-    prdetector.load_domain_and_calculate_vec(
-        input_domains_path_list=config.input_domains_path_list)
+    prdetector = PRDetector(
+        label_domain_dic=prcluster_result.label_domain_dic,
+        domain_label_dic=prcluster_result.domain_label_dic,
+        label_filter_dic=prcluster_result.label_filter_dic,
+        cluster_vec_dic=prcluster.phishingti_vec_dic,
+        args=args,
+    )
+
+    if args.dnstwist_domain:
+        domains = generate_dnstwist_domains(args.dnstwist_domain)
+        if args.dnstwist_output:
+            with open(args.dnstwist_output, 'w') as f:
+                for d in domains:
+                    f.write(d + "\n")
+        prdetector.load_domain_list_and_calculate_vec(domains)
+    else:
+        prdetector.load_domain_and_calculate_vec(
+            input_domains_path_list=config.input_domains_path_list)
     del prcluster
     gc.collect()
     prdetector_results = prdetector.run()
@@ -734,6 +793,10 @@ if __name__ == '__main__':
                         help="Directory path of output")
     parser.add_argument(
         '--target_date', help="Target date (YYYYMMDD) for clustering phishing TI")
+    parser.add_argument(
+        '--dnstwist_domain', help='Generate candidate domains for this domain using dnstwist')
+    parser.add_argument(
+        '--dnstwist_output', help='Save dnstwist-generated domains to this file')
 
     args = parser.parse_args()
     main(args)

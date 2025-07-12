@@ -55,4 +55,27 @@ def test__filter_out_domain():
     assert PRDetector._filter_out_domain("example.com", [{"type":"tld","val":"com"}]) is False
     assert PRDetector._filter_out_domain("example.com", [{"type":"tld","val":"net"}]) is True
     assert PRDetector._filter_out_domain("www.example.com", [{"type":"fld","val":"example.com"}]) is False
-    assert PRDetector._filter_out_domain("www.example.net", [{"type":"fld","val":"example.com"}])
+    assert PRDetector._filter_out_domain("www.example.net", [{"type":"fld","val":"example.com"}]) is True
+
+
+def test_generate_dnstwist_domains(monkeypatch):
+    class DummyFuzz:
+        def __init__(self, domain):
+            self.domain = domain
+            self.domains = []
+        def generate(self):
+            self.domains = [
+                {"domain": "a." + self.domain},
+                {"domain": "b." + self.domain},
+            ]
+
+    monkeypatch.setattr(main, "DomainFuzz", DummyFuzz)
+    domains = main.generate_dnstwist_domains("example.com")
+    assert domains == ["a.example.com", "b.example.com"]
+
+
+def test_generate_dnstwist_domains_import_error(monkeypatch):
+    monkeypatch.setattr(main, "DomainFuzz", None)
+    with pytest.raises(ImportError):
+        main.generate_dnstwist_domains("example.com")
+
